@@ -1,5 +1,5 @@
 import { MainLayout } from "@/components/primary-layout"
-import CameraViewPanel from "./_components/main-panel"
+import CameraViewPanel from "./_components/live-panel"
 
 export default function CameraPage() {
     return (

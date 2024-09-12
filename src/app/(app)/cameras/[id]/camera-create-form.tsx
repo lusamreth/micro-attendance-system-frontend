@@ -25,8 +25,9 @@ const formSchema = z.object({
     classroom: z.string().min(1, "Classroom is required"),
     rtspLink: z.string().url("Invalid RTSP link"),
     cameraName: z.string().min(1, "Camera name is required"),
-    cameraModel: z.string().min(1, "Camera model is required"),
+    cameraModel: z.string().optional(),
 });
+type CameraForm = typeof formSchema
 
 const NewCameraForm = () => {
     const form = useForm({
@@ -41,7 +42,7 @@ const NewCameraForm = () => {
         },
     });
 
-    const onSubmit = (values) => {
+    const onSubmit = (values: any) => {
         console.log(values);
         // Here you would typically send the data to your backend
     };
