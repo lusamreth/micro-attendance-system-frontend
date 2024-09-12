@@ -1,52 +1,64 @@
 "use client"
-import React, { useState } from 'react'
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from 'lucide-react'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
-import { IconDots, IconPencil, IconTrash, IconPlus } from '@tabler/icons-react'
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
-import { Badge } from "@/components/ui/badge"
-import Text from '@/components/ui/text'
+import React, { useMemo, useState } from 'react';
+import EnrollmentForm from './enrollment-form';
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { IconDots, IconPencil, IconTrash, IconPlus, IconCheck, IconCheckbox, IconEye } from '@tabler/icons-react';
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Badge } from "@/components/ui/badge";
+import Text from '@/components/ui/text';
+import { useRouter } from 'next/navigation';
+import { attendanceBackend } from '@/lib/axios/attendance-instance';
+import { useToast } from '@/hooks/use-toast';
 
-const studentsData = [
-    {
-        id: 1,
-        name: "John Doe",
-        firstName: "John",
-        lastName: "Doe",
-        age: 20,
-        birthDate: "2003-05-15",
-        class: "A",
-        gender: "Male",
-        major: "Computer Science",
-        enrollments: ["Data Science", "Machine Learning"],
-        attendance: { present: 15, late: 2, absentWithPermission: 1, absentWithoutPermission: 0 }
-    },
-    {
-        id: 2,
-        name: "Jane Smith",
-        firstName: "Jane",
-        lastName: "Smith",
-        age: 22,
-        birthDate: "2001-08-22",
-        class: "B",
-        gender: "Female",
-        major: "Mathematics",
-        enrollments: ["Robotics", "Machine Learning"],
-        attendance: { present: 16, late: 1, absentWithPermission: 1, absentWithoutPermission: 1 }
-    },
-    // Add more data here
-]
+// Define interfaces for the backend response structure
+interface Student {
+    id: string;
+    firstname: string;
+    lastname: string;
+    generation: number;
+    gender: string;
+    major: string | null;
+    phone_num: string | null;
+    address: string | null;
+    birthDate?: string; // Add optional birthDate field
+    class?: string; // Add optional class field
+}
 
+interface Attendance {
+    id: string;
+    absent_count: number;
+    absent_with_permission: number;
+    present_count: number;
+    late_count: number;
+    student_id: string;
+}
+
+interface StudentData {
+    student: Student;
+    attendance: Attendance;
+    enrollments: string[];
+}
+
+// Define the props with proper typing
+type StudentsDataProps = {
+    data: StudentData[]; // Use the StudentData interface
+    mutate: () => void; // Add mutate prop for refreshing data
+};
+
+// Define action types for the popover
 const PopoverActionFields = [
+    { label: "View", icon: <IconEye />, actionMap: "view" },
     { label: "Edit", icon: <IconPencil />, actionMap: "edit" },
     { label: "Delete", icon: <IconTrash />, actionMap: "delete" },
-    { label: "Mark permission", icon: <CheckIcon />, actionMap: "delete" }
-]
+    { label: "View Attendances", icon: <IconCheckbox />, actionMap: "view-attendance" }
+];
 
-const PopoverField = () => {
+// Define the PopoverField component with action mappings
+const PopoverField: React.FC<{ actionMaps: Record<string, (a: string) => void>, id: string }> = ({ actionMaps, id }) => {
     return (
         <Popover>
             <PopoverTrigger asChild>
@@ -57,7 +69,11 @@ const PopoverField = () => {
             <PopoverContent className="max-w-48 py-2 px-1">
                 <div className="w-full">
                     {PopoverActionFields.map((field, index) => (
-                        <span key={index} className="flex items-center hover:bg-gray-100 w-full px-2 rounded-lg">
+                        <span
+                            key={index}
+                            className="flex items-center hover:bg-gray-100 w-full px-2 rounded-lg"
+                            onClick={() => actionMaps[field.actionMap](id)}
+                        >
                             {field.icon}
                             <Button variant="link" className="flex w-full justify-start">
                                 <Text variant="body">
@@ -69,30 +85,48 @@ const PopoverField = () => {
                 </div>
             </PopoverContent>
         </Popover>
-    )
-}
+    );
+};
 
-export default function StudentTable() {
-    const [students, setStudents] = useState(studentsData)
-    const [searchTerm, setSearchTerm] = useState('')
-    const [currentPage, setCurrentPage] = useState(1)
-    const [itemsPerPage] = useState(5)
-    const [filter, setFilter] = useState('All')
-
-    const indexOfLastItem = currentPage * itemsPerPage
-    const indexOfFirstItem = indexOfLastItem - itemsPerPage
+const StudentTable: React.FC<StudentsDataProps> = ({ data, mutate }) => {
+    const students = data
+    const [searchTerm, setSearchTerm] = useState<string>('');
+    const [currentPage, setCurrentPage] = useState<number>(1);
+    const [itemsPerPage] = useState<number>(5);
+    const router = useRouter();
+    const [filter, setFilter] = useState<string>('All');
+    const { toast } = useToast()
+    const indexOfLastItem = currentPage * itemsPerPage;
+    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
     const filteredStudents = students.filter(student =>
-        student.name.toLowerCase().includes(searchTerm.toLowerCase()) && (filter === 'All' || student.class === filter)
-    )
-    const currentStudents = filteredStudents.slice(indexOfFirstItem, indexOfLastItem)
-    const totalPages = Math.ceil(filteredStudents.length / itemsPerPage)
+        student.student.firstname.toLowerCase().includes(searchTerm.toLowerCase()) && (filter === 'All' || student.student.class === filter)
+    );
+    const currentStudents = filteredStudents.slice(indexOfFirstItem, indexOfLastItem);
+    const totalPages = Math.ceil(filteredStudents.length / itemsPerPage);
 
     const handleNextPage = () => {
-        if (currentPage < totalPages) setCurrentPage(prev => prev + 1)
-    }
+        if (currentPage < totalPages) setCurrentPage(prev => prev + 1);
+    };
 
     const handlePreviousPage = () => {
-        if (currentPage > 1) setCurrentPage(prev => prev - 1)
+        if (currentPage > 1) setCurrentPage(prev => prev - 1);
+    };
+
+    const handleDeleteStudent = async (id: string) => {
+        try {
+            await attendanceBackend.delete(`/students/${id}`);
+            toast({ title: "Success", description: "Student deleted successfully.", variant: "success" });
+            await mutate()
+        } catch (error) {
+            toast({ title: "Error", description: "Failed to delete student.", variant: "destructive" });
+        }
+    };
+
+    const actionMaps = {
+        "view": (stud_id: string) => router.push(`/students/${stud_id}`),
+        "edit": (id: string) => console.log("Edit student"),
+        "delete": (id: string) => handleDeleteStudent(id),
+        "view-attendance": (id: string) => router.push(`/students/${id}/attendance`)
     }
 
     return (
@@ -145,12 +179,12 @@ export default function StudentTable() {
                 </TableHeader>
                 <TableBody className="border">
                     {currentStudents.map((student) => (
-                        <TableRow key={student.id}>
-                            <TableCell>{student.name}</TableCell>
-                            <TableCell>{student.birthDate || 'N/A'}</TableCell>
-                            <TableCell>{student.class}</TableCell>
-                            <TableCell>{student.gender || 'N/A'}</TableCell>
-                            <TableCell>{student.major}</TableCell>
+                        <TableRow key={student.student.id}>
+                            <TableCell>{`${student.student.firstname} ${student.student.lastname}`}</TableCell>
+                            <TableCell>{student.student.birthDate || 'N/A'}</TableCell>
+                            <TableCell>{student.student.class || 'N/A'}</TableCell>
+                            <TableCell>{student.student.gender || 'N/A'}</TableCell>
+                            <TableCell>{student.student.major || 'N/A'}</TableCell>
                             <TableCell>
                                 <div className="flex flex-wrap gap-1">
                                     {student.enrollments.map((course, index) => (
@@ -158,26 +192,27 @@ export default function StudentTable() {
                                             {course}
                                         </Badge>
                                     ))}
-                                    <Button size="sm" variant="ghost" className="p-1 rounded-full">
-                                        <IconPlus className="h-4 w-4" />
-                                    </Button>
+
+                                    <EnrollmentForm studentId={student.student.id} mutate={mutate} />
                                 </div>
                             </TableCell>
                             <TableCell>
-                                <div className="space-y-1 text-sm">
-                                    <div>Present: {student.attendance.present}</div>
-                                    <div>Late: {student.attendance.late}</div>
-                                    <div>Absent (permission): {student.attendance.absentWithPermission}</div>
-                                    <div>Absent (no-permission): {student.attendance.absentWithoutPermission}</div>
+                                <div className="space-y-1">
+                                    <Badge variant="outline">Present: {student.attendance.present_count}</Badge>
+                                    <Badge variant="secondary">Late: {student.attendance.late_count}</Badge>
+                                    <Badge variant="default">Absent (w/ permission): {student.attendance.absent_with_permission}</Badge>
+                                    <Badge variant="destructive" className="bg-red-500">Absent (w/o permission): {student.attendance.absent_count}</Badge>
                                 </div>
                             </TableCell>
                             <TableCell className="text-right">
-                                <PopoverField />
+                                <PopoverField actionMaps={actionMaps} id={student.student.id} />
                             </TableCell>
                         </TableRow>
                     ))}
                 </TableBody>
             </Table>
         </div>
-    )
-}
+    );
+};
+
+export default StudentTable;
